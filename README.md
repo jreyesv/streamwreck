@@ -187,3 +187,7 @@ go test ./...        # unit tests (no Docker required)
 go build ./...       # build all packages
 go build -o streamwreck ./cmd/streamwreck
 ```
+
+## License
+
+[MIT](LICENSE) © 2026 Juan Reyes
