@@ -1,0 +1,40 @@
+name: reconnect-storm
+description: Kill/respawn encoder every N seconds — discontinuity handling.
+
+source:
+  type: testsrc2
+  resolution: 1280x720
+  fps: 30
+  timecode_overlay: true
+
+encoder:
+  video_bitrate: 3M
+  maxrate: 3M
+  bufsize: 6M
+  gop: 60
+  keyint_min: 60
+  preset: veryfast
+  tune: zerolatency
+  audio_bitrate: 128k
+
+output:
+  protocol: rtmp
+  url: rtmp://ingest/live/stream
+
+timeline:
+  - at: 30s
+    action: restart_encoder
+  - at: 60s
+    action: kill_encoder
+    params: { duration: 5s }
+  - at: 90s
+    action: restart_encoder
+
+verify:
+  enabled: true
+  pull: http://ingest:8888/live/stream/index.m3u8
+  checks:
+    - discontinuity_tags
+    - segment_duration
+    - join_time
+  report: ./reports/reconnect-storm.json

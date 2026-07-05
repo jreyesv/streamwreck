@@ -1,0 +1,8 @@
+# Compiled binary
+/streamwreck
+
+# Verification output
+/reports/*.json
+
+# Scratch
+/scratch_dbg/

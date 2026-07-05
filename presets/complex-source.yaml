@@ -1,0 +1,37 @@
+name: complex-source
+description: High-complexity VBR content colliding with a modest rate cap — the real
+  downstream effect of content-driven bitrate spikes (uplink bursts, variable segment
+  sizes, ABR noise). Spikes are content-driven here, never a commanded dial.
+
+source:
+  type: complex
+  complexity: high
+  resolution: 1280x720
+  fps: 30
+  timecode_overlay: true
+
+encoder:
+  video_bitrate: 3M
+  maxrate: 6M
+  bufsize: 3M          # tight bufsize against a high maxrate → VBV/buffer stress
+  gop: 60
+  keyint_min: 60
+  preset: veryfast
+  audio_bitrate: 128k
+
+output:
+  protocol: rtmp
+  url: rtmp://ingest/live/stream
+
+timeline:
+  - at: 0s
+    network: { rate: 2500kbit, accurate: true }   # modest cap the VBR bursts collide with
+
+verify:
+  enabled: true
+  pull: http://ingest:8888/live/stream/index.m3u8
+  checks:
+    - segment_duration
+    - rebuffering
+    - join_time
+  report: ./reports/complex-source.json

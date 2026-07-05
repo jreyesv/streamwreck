@@ -1,0 +1,34 @@
+name: bad-client
+description: Healthy origin, impaired player pull path — join time + rebuffering.
+
+source:
+  type: testsrc2
+  resolution: 1280x720
+  fps: 30
+  timecode_overlay: true
+
+encoder:
+  video_bitrate: 3M
+  maxrate: 3M
+  bufsize: 6M
+  gop: 60
+  keyint_min: 60
+  preset: veryfast
+  tune: zerolatency
+  audio_bitrate: 128k
+
+output:
+  protocol: rtmp
+  url: rtmp://ingest/live/stream
+
+timeline: []
+
+verify:
+  enabled: true
+  pull: http://ingest:8888/live/stream/index.m3u8
+  degrade_player: true
+  checks:
+    - join_time
+    - rebuffering
+    - segment_duration
+  report: ./reports/bad-client.json

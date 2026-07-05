@@ -1,0 +1,28 @@
+# MediaMTX config for the streamwreck ingest/origin. Accepts RTMP + SRT
+# publishes and republishes HLS (and DASH/WebRTC) for the verifier to pull.
+
+logLevel: info
+
+# Ingest protocols.
+rtmp: yes
+rtmpAddress: :1935
+
+srt: yes
+srtAddress: :8890
+
+# Playback origin.
+hls: yes
+hlsAddress: :8888
+hlsVariant: mpegts        # keep segments as mpegts so SCTE-35 survives to the manifest
+hlsAlwaysRemux: yes       # generate HLS continuously as soon as a stream publishes,
+                          # so the pull-based verifier sees a stable playlist rather
+                          # than an on-demand muxer that tears down between requests
+hlsSegmentCount: 7
+hlsSegmentDuration: 2s    # aligns with the 2s (gop=60 @30fps) keyframe cadence
+
+webrtc: yes
+webrtcAddress: :8889
+
+# Single wildcard path: publish to live/stream, pull HLS at /live/index.m3u8.
+paths:
+  all_others:
