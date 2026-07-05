@@ -40,6 +40,7 @@ timeline:
 	c.log = func(string, ...any) {}
 	zero := time.Duration(0)
 	c.runDurOverride = &zero
+	c.encoderGrace = 0
 
 	if _, err := c.Run(context.Background(), s); err != nil {
 		t.Fatal(err)
@@ -78,6 +79,7 @@ timeline:
 	c.log = func(string, ...any) {}
 	zero := time.Duration(0)
 	c.runDurOverride = &zero
+	c.encoderGrace = 0
 	if _, err := c.Run(context.Background(), s); err != nil {
 		t.Fatal(err)
 	}

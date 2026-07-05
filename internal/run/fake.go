@@ -1,6 +1,7 @@
 package run
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"sync"
@@ -54,9 +55,9 @@ func (f *FakeRunner) Exec(_ context.Context, service string, argv ...string) (st
 
 func (f *FakeRunner) Start(_ context.Context, service string, argv ...string) (*Handle, error) {
 	f.record(Call{Kind: "start", Service: service, Argv: argv})
-	h := &Handle{done: make(chan error, 1)}
-	h.done <- nil
-	return h, nil
+	// A fake "running" process: done stays open until Stop, so WaitFor reports it
+	// as alive (the controller's fail-fast must not trip on the fake encoder).
+	return &Handle{done: make(chan struct{}), Stderr: &bytes.Buffer{}}, nil
 }
 
 func (f *FakeRunner) ComposeUp(context.Context) error {

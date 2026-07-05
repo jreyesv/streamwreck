@@ -86,6 +86,23 @@ func TestScaffoldYAML_RejectsBadProfile(t *testing.T) {
 	}
 }
 
+func TestSlugify(t *testing.T) {
+	cases := map[string]string{
+		"My Wifi Test":   "my-wifi-test",
+		"flaky_uplink!!": "flaky-uplink",
+		"  Spaces  ":     "spaces",
+		"already-good":   "already-good",
+		"UPPER":          "upper",
+		"":               "",
+		"---":            "",
+	}
+	for in, want := range cases {
+		if got := slugify(in); got != want {
+			t.Errorf("slugify(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestDefaultProtocolInference(t *testing.T) {
 	if defaultProtocol("srt://x:9000") != "srt" {
 		t.Error("srt url should infer srt")

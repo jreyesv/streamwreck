@@ -45,6 +45,11 @@ func gatherInteractive(in scaffoldInput, r *bufio.Reader, w io.Writer) scaffoldI
 	fmt.Fprintln(w, "Press enter to accept the [default].")
 	fmt.Fprintln(w)
 
+	if in.Name == "" {
+		fmt.Fprintln(w, "Name for this scenario (becomes presets/user/<name>.yaml).")
+		in.Name = prompt(r, w, "  name", "mytest")
+		fmt.Fprintln(w)
+	}
 	if in.Ingest == "" {
 		fmt.Fprintln(w, "Ingest URL — where the encoder PUBLISHES. Point this at your real ingest")
 		fmt.Fprintln(w, "and include the stream key, e.g. rtmp://ingest.yourplatform.com/app/STREAMKEY")

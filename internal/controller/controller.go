@@ -43,18 +43,23 @@ type Controller struct {
 	// runDurOverride, when non-nil, replaces the timeline-derived run duration.
 	// Used by tests to avoid the multi-minute hold; nil in production.
 	runDurOverride *time.Duration
+
+	// encoderGrace is how long the encoder must survive after launch before the
+	// run proceeds (fail-fast on a dead encoder). Tests set it to 0.
+	encoderGrace time.Duration
 }
 
 // New constructs a Controller from a Runner.
 func New(r run.Runner) *Controller {
 	return &Controller{
-		runner: r,
-		enc:    encoder.NewSupervisor(r, svcEncoder),
-		egress: shaper.New(r, svcShaper, shaper.Dev),
-		pull:   shaper.New(r, svcPlayerShaper, shaper.Dev),
-		scte:   scte.New(r, svcShaper),
-		verf:   verify.New(r, svcPlayer),
-		log:    func(f string, a ...any) { fmt.Fprintf(os.Stderr, "[streamwreck] "+f+"\n", a...) },
+		runner:       r,
+		enc:          encoder.NewSupervisor(r, svcEncoder),
+		egress:       shaper.New(r, svcShaper, shaper.Dev),
+		pull:         shaper.New(r, svcPlayerShaper, shaper.Dev),
+		scte:         scte.New(r, svcShaper),
+		verf:         verify.New(r, svcPlayer),
+		encoderGrace: 2 * time.Second,
+		log:          func(f string, a ...any) { fmt.Fprintf(os.Stderr, "[streamwreck] "+f+"\n", a...) },
 	}
 }
 
@@ -70,6 +75,13 @@ func (c *Controller) Run(ctx context.Context, s *scenario.Scenario) (*report.Rep
 	runDur := timelineDuration(s)
 	if c.runDurOverride != nil {
 		runDur = scenario.Duration(*c.runDurOverride)
+	}
+
+	// Repair well-known ingest-URL mistakes (e.g. an Amazon IVS URL missing its
+	// :443 port and /app/ path) before the encoder ever tries to connect.
+	if fixed, note := scenario.NormalizeIngestURL(s.Output.URL); note != "" {
+		c.log("%s\n  %s\n  -> %s", note, s.Output.URL, fixed)
+		s.Output.URL = fixed
 	}
 
 	// Author the SCTE-35 cue schedule up front (validates threefive and the
@@ -103,6 +115,13 @@ func (c *Controller) Run(ctx context.Context, s *scenario.Scenario) (*report.Rep
 		return nil, fmt.Errorf("launch encoder: %w", err)
 	}
 	defer func() { _ = c.enc.Stop(context.Background()) }()
+
+	// Fail fast: if the encoder dies right away (bad ingest URL, rejected stream
+	// key, wrong protocol), abort now with its log instead of holding the whole
+	// run and then failing verification against a stream that never existed.
+	if err := c.enc.EnsureAlive(ctx, c.encoderGrace); err != nil {
+		return nil, fmt.Errorf("encoder failed to start: %w", err)
+	}
 
 	// Step the timeline (events fire at their offsets from `start`).
 	if err := c.stepTimeline(ctx, start, s, &launchOpts); err != nil {

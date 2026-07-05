@@ -4,5 +4,8 @@
 # Verification output
 /reports/*.json
 
+# User-created scenarios (from `streamwreck init`)
+/presets/user/
+
 # Scratch
 /scratch_dbg/

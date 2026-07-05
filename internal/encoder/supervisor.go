@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"streamwreck/internal/run"
 	"streamwreck/internal/scenario"
@@ -60,8 +61,49 @@ func (s *Supervisor) Stop(ctx context.Context) error {
 	return nil
 }
 
+// EnsureAlive fails fast if the encoder exits within grace of launch — the
+// signature of a bad ingest URL, rejected stream key, or wrong protocol. The
+// returned error includes the tail of ffmpeg's own log so the cause is visible
+// without a manual re-run.
+func (s *Supervisor) EnsureAlive(ctx context.Context, grace time.Duration) error {
+	if s.handle == nil {
+		return fmt.Errorf("encoder is not running")
+	}
+	exited, werr := s.handle.WaitFor(grace)
+	if !exited {
+		return nil
+	}
+	tail := ""
+	if s.handle.Stderr != nil {
+		tail = lastLines(s.handle.Stderr.String(), 15)
+	}
+	msg := fmt.Sprintf("encoder exited within %s of launch", grace)
+	if werr != nil {
+		msg += " (" + werr.Error() + ")"
+	}
+	if tail != "" {
+		msg += "\n--- ffmpeg output ---\n" + tail
+	}
+	return fmt.Errorf("%s", msg)
+}
+
 // Handle exposes the current supervising handle (nil when stopped).
 func (s *Supervisor) Handle() *run.Handle { return s.handle }
+
+// lastLines returns the final n non-empty lines of s.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	var kept []string
+	for _, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			kept = append(kept, l)
+		}
+	}
+	if len(kept) > n {
+		kept = kept[len(kept)-n:]
+	}
+	return strings.Join(kept, "\n")
+}
 
 // shellJoin single-quote-escapes each arg for safe embedding in `sh -c`.
 func shellJoin(args []string) string {

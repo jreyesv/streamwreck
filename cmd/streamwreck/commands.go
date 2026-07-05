@@ -40,6 +40,22 @@ func signalCtx() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
+// userPresetDir is where `init` writes user-created scenarios (gitignored). A
+// --preset name is resolved from the embedded bundle first, then from here.
+const userPresetDir = "presets/user"
+
+// loadPreset resolves a --preset name: bundled (embedded) presets first, then a
+// user preset on disk under presets/user/<name>.yaml.
+func loadPreset(name string) ([]byte, error) {
+	if data, err := sw.Preset(name); err == nil {
+		return data, nil
+	}
+	if data, err := os.ReadFile(filepath.Join(userPresetDir, name+".yaml")); err == nil {
+		return data, nil
+	}
+	return nil, fmt.Errorf("unknown preset %q (see `streamwreck presets`)", name)
+}
+
 // loadScenario resolves a scenario from either a --preset name or a file path,
 // then applies any --source-file override.
 func loadScenario(cmd *cobra.Command, args []string) (*scenario.Scenario, error) {
@@ -50,9 +66,9 @@ func loadScenario(cmd *cobra.Command, args []string) (*scenario.Scenario, error)
 	preset, _ := cmd.Flags().GetString("preset")
 	switch {
 	case preset != "":
-		data, perr := sw.Preset(preset)
+		data, perr := loadPreset(preset)
 		if perr != nil {
-			return nil, fmt.Errorf("unknown preset %q (see `streamwreck presets`)", preset)
+			return nil, perr
 		}
 		s, err = scenario.Parse(data)
 	case len(args) > 0:
@@ -132,6 +148,9 @@ func validateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if _, note := scenario.NormalizeIngestURL(s.Output.URL); note != "" {
+				fmt.Printf("note: %s (streamwreck will apply this automatically at run time)\n", note)
+			}
 			fmt.Printf("ok: %q is valid (%d timeline events)\n", s.Name, len(s.Timeline))
 			return nil
 		},
@@ -172,11 +191,21 @@ func initCmd() *cobra.Command {
 			if in.Profile == "" {
 				in.Profile = "flaky-uplink"
 			}
+			in.Name = slugify(in.Name)
 			if in.Name == "" {
-				in.Name = "my-" + hostSlug(in.Ingest)
+				in.Name = "mytest"
 			}
+			// Default location: presets/user/<name>.yaml (gitignored). An explicit
+			// --output is honored as-is.
 			if out == "" {
-				out = in.Name + ".yaml"
+				out = filepath.Join(userPresetDir, in.Name+".yaml")
+			}
+
+			// Repair known ingest-URL mistakes (e.g. IVS :443//app/) up front so
+			// the generated scenario is correct and runnable as written.
+			if fixed, note := scenario.NormalizeIngestURL(in.Ingest); note != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\n", note)
+				in.Ingest = fixed
 			}
 
 			yaml, err := scaffoldYAML(in)
@@ -188,6 +217,9 @@ func initCmd() *cobra.Command {
 					return fmt.Errorf("%s already exists (use --force to overwrite)", out)
 				}
 			}
+			if derr := os.MkdirAll(filepath.Dir(out), 0o755); derr != nil {
+				return derr
+			}
 			if werr := os.WriteFile(out, []byte(yaml), 0o644); werr != nil {
 				return werr
 			}
@@ -195,7 +227,12 @@ func initCmd() *cobra.Command {
 			fmt.Fprintf(os.Stderr, "next:\n")
 			fmt.Fprintf(os.Stderr, "  1. review output.url — confirm the stream key, use a staging channel\n")
 			fmt.Fprintf(os.Stderr, "  2. streamwreck up\n")
-			fmt.Fprintf(os.Stderr, "  3. streamwreck run %s\n", out)
+			// User presets are resolvable by name (loadPreset checks presets/user).
+			if strings.HasPrefix(filepath.ToSlash(out), userPresetDir+"/") {
+				fmt.Fprintf(os.Stderr, "  3. streamwreck run --preset %s\n", in.Name)
+			} else {
+				fmt.Fprintf(os.Stderr, "  3. streamwreck run %s\n", out)
+			}
 			return nil
 		},
 	}
@@ -210,32 +247,57 @@ func initCmd() *cobra.Command {
 	return cmd
 }
 
-// hostSlug turns an ingest host into a filename-safe slug.
-func hostSlug(url string) string {
-	h := hostOf(url)
-	h = strings.ReplaceAll(h, ".", "-")
-	if h == "" || h == "your-platform" {
-		return "platform"
+// slugify turns a user-supplied name into a lowercase, filename-safe slug
+// (alphanumerics kept, everything else collapsed to single dashes).
+func slugify(name string) string {
+	var b strings.Builder
+	prevDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash && b.Len() > 0 {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
 	}
-	return h
+	return strings.Trim(b.String(), "-")
 }
 
 func presetsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "presets",
-		Short: "List bundled presets",
+		Short: "List bundled and user presets",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			for _, name := range sw.PresetNames() {
-				data, err := sw.Preset(name)
-				if err != nil {
-					continue
-				}
+			printPreset := func(name string, data []byte) {
 				desc := ""
 				if s, perr := scenario.Parse(data); perr == nil {
 					desc = s.Description
 				}
-				fmt.Printf("  %-22s %s\n", name, desc)
+				fmt.Printf("  %-24s %s\n", name, desc)
+			}
+			fmt.Println("bundled:")
+			for _, name := range sw.PresetNames() {
+				if data, err := sw.Preset(name); err == nil {
+					printPreset(name, data)
+				}
+			}
+			// User presets from presets/user/ (created by `init`).
+			if entries, _ := os.ReadDir(userPresetDir); len(entries) > 0 {
+				fmt.Printf("\nuser (%s):\n", userPresetDir)
+				for _, e := range entries {
+					if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
+						continue
+					}
+					name := strings.TrimSuffix(e.Name(), ".yaml")
+					if data, err := os.ReadFile(filepath.Join(userPresetDir, e.Name())); err == nil {
+						printPreset(name, data)
+					}
+				}
 			}
 			return nil
 		},

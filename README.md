@@ -114,14 +114,18 @@ your **ingest URL + stream key** (`output.url`, where the encoder publishes) and
 scenario with a starter impairment profile:
 
 ```bash
-streamwreck init                     # interactive
+streamwreck init                     # interactive (asks for a name, ingest, playback, profile)
 # or fully scripted:
-streamwreck init \
+streamwreck init --name mytest \
   --ingest "rtmp://ingest.yourplatform.com/app/STREAMKEY" \
   --pull   "https://play.yourplatform.com/.../index.m3u8" \
-  --profile flaky-uplink -o mytest.yaml
-streamwreck run mytest.yaml
+  --profile flaky-uplink
+streamwreck run --preset mytest      # resolvable by name
 ```
+
+Generated scenarios are written to `presets/user/<name>.yaml` (gitignored, so your stream keys
+never get committed) and are resolvable by name via `--preset`, alongside the bundled ones —
+`streamwreck presets` lists both. Pass `-o <path>` to write elsewhere.
 
 Profiles: `clean` (connectivity + baseline QoE), `flaky-uplink` (delay/jitter/loss burst + bandwidth
 cap, then recovery), `reconnect` (encoder restart + kill/respawn — a broadcaster reconnecting). Point
@@ -129,6 +133,17 @@ it at a **staging/test channel**: each run creates a real live stream (recording
 ads). When `output.url` targets an external ingest, the bundled MediaMTX `ingest` container simply
 goes unused; the encoder's egress shaping still degrades the real uplink, all inside the container's
 netns.
+
+Two guardrails make misconfiguration self-explanatory:
+
+- **Amazon IVS URLs are auto-repaired.** An IVS ingest (`*.contribute.live-video.net`) requires
+  `rtmps://<host>:443/app/<stream-key>`; a stream key pasted straight onto the host is silently
+  rejected during the TLS handshake. `init`, `validate`, and `run` detect this and add the `:443`
+  port and `/app/` path (and upgrade `rtmp`→`rtmps`), logging what changed.
+- **Fail-fast on a dead encoder.** If ffmpeg exits within the first ~2s (bad URL, rejected stream
+  key, wrong protocol), the run aborts immediately and prints ffmpeg's own log tail — instead of
+  holding the full run and then failing verification against a stream that never existed. The
+  encoder's ffmpeg output also streams live during a run.
 
 ### Choosing the video source
 

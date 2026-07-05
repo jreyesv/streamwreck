@@ -8,9 +8,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Runner executes commands inside compose services and manages the stack.
@@ -30,13 +33,37 @@ type Runner interface {
 
 // Handle supervises a detached in-container process started via Start.
 type Handle struct {
-	cmd    *exec.Cmd
-	done   chan error
-	Stderr *bytes.Buffer
+	cmd     *exec.Cmd
+	done    chan struct{} // closed when the process exits
+	mu      sync.Mutex
+	exitErr error
+	Stderr  *bytes.Buffer
 }
 
-// Wait blocks until the process exits.
-func (h *Handle) Wait() error { return <-h.done }
+// Wait blocks until the process exits and returns its exit error.
+func (h *Handle) Wait() error {
+	<-h.done
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.exitErr
+}
+
+// WaitFor reports whether the process exited within d. When exited is true, err
+// is its exit error (possibly nil); when false, the process is still running.
+// This is the basis for the controller's fail-fast on a dead encoder.
+func (h *Handle) WaitFor(d time.Duration) (exited bool, err error) {
+	if h == nil || h.done == nil {
+		return false, nil
+	}
+	select {
+	case <-h.done:
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return true, h.exitErr
+	case <-time.After(d):
+		return false, nil
+	}
+}
 
 // Stop signals the underlying `docker exec` process to terminate. Callers that
 // need the in-container process reliably dead should also issue a targeted kill
@@ -90,13 +117,22 @@ func (d *dockerRunner) Start(ctx context.Context, service string, argv ...string
 	args := d.composeArgs(append([]string{"exec", "-T", d.service(service)}, argv...)...)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	stderr := &bytes.Buffer{}
-	cmd.Stderr = stderr
-	cmd.Stdout = os.Stderr // stream ffmpeg progress to our stderr for visibility
+	// ffmpeg writes ALL its logs (connection status, errors, progress) to stderr.
+	// Stream it live to our stderr so publish failures are visible, while also
+	// capturing a copy for post-mortem inspection.
+	cmd.Stderr = io.MultiWriter(os.Stderr, stderr)
+	cmd.Stdout = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start docker exec %s: %w", service, err)
 	}
-	h := &Handle{cmd: cmd, done: make(chan error, 1), Stderr: stderr}
-	go func() { h.done <- cmd.Wait() }()
+	h := &Handle{cmd: cmd, done: make(chan struct{}), Stderr: stderr}
+	go func() {
+		err := cmd.Wait()
+		h.mu.Lock()
+		h.exitErr = err
+		h.mu.Unlock()
+		close(h.done)
+	}()
 	return h, nil
 }
 
