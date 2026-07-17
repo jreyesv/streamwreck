@@ -80,11 +80,14 @@ func (h *Handle) Stop() error {
 type dockerRunner struct {
 	composeFile string
 	projectName string
+	profiles    []string // compose profiles to activate (e.g. "lab" for the demo origin)
 }
 
-// NewDocker returns a Runner bound to a specific compose file / project.
-func NewDocker(composeFile, projectName string) Runner {
-	return &dockerRunner{composeFile: composeFile, projectName: projectName}
+// NewDocker returns a Runner bound to a specific compose file / project. Any
+// profiles are passed to `docker compose` so profile-gated services (the demo
+// MediaMTX origin) start only when requested.
+func NewDocker(composeFile, projectName string, profiles ...string) Runner {
+	return &dockerRunner{composeFile: composeFile, projectName: projectName, profiles: profiles}
 }
 
 func (d *dockerRunner) service(service string) string {
@@ -96,6 +99,9 @@ func (d *dockerRunner) composeArgs(extra ...string) []string {
 	args := []string{"compose", "-f", d.composeFile}
 	if d.projectName != "" {
 		args = append(args, "-p", d.projectName)
+	}
+	for _, p := range d.profiles {
+		args = append(args, "--profile", p)
 	}
 	return append(args, extra...)
 }
@@ -141,7 +147,9 @@ func (d *dockerRunner) ComposeUp(ctx context.Context) error {
 }
 
 func (d *dockerRunner) ComposeDown(ctx context.Context) error {
-	return d.compose(ctx, "down", "-v")
+	// --remove-orphans clears services whose profile isn't active (e.g. the demo
+	// origin) so `down` always tears the whole project down.
+	return d.compose(ctx, "down", "-v", "--remove-orphans")
 }
 
 func (d *dockerRunner) compose(ctx context.Context, extra ...string) error {

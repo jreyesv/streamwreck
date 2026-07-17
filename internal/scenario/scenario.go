@@ -19,6 +19,11 @@ type Scenario struct {
 	Output   Output   `yaml:"output"`
 	Timeline Timeline `yaml:"timeline"`
 
+	// RunDuration, when set, is how long the stream runs before verification.
+	// Unset (nil) means "derive from the timeline" (last event offset, floored
+	// to 60s, plus a 30s tail). A `--duration` flag overrides this.
+	RunDuration *Duration `yaml:"duration"`
+
 	SCTE   *SCTE   `yaml:"scte35"`
 	Ad     *Ad     `yaml:"ad"`
 	Verify *Verify `yaml:"verify"`

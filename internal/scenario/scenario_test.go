@@ -111,6 +111,41 @@ timeline:
 	}
 }
 
+func TestParse_ExplicitDuration(t *testing.T) {
+	y := `
+name: t
+source: { type: testsrc2, fps: 30 }
+encoder: { video_bitrate: 3M, gop: 60 }
+output: { protocol: rtmp, url: rtmp://x/y }
+duration: 10m
+timeline: []
+`
+	s, err := Parse([]byte(y))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.RunDuration == nil {
+		t.Fatal("duration should be parsed into RunDuration")
+	}
+	if s.RunDuration.Std() != 10*time.Minute {
+		t.Errorf("duration = %v, want 10m", s.RunDuration.Std())
+	}
+}
+
+func TestValidate_RejectsNonPositiveDuration(t *testing.T) {
+	y := `
+name: t
+source: { type: testsrc2, fps: 30 }
+encoder: { video_bitrate: 3M, gop: 60 }
+output: { protocol: rtmp, url: rtmp://x/y }
+duration: 0s
+timeline: []
+`
+	if _, err := Parse([]byte(y)); err == nil {
+		t.Fatal("expected error for non-positive duration")
+	}
+}
+
 func TestValidate_RejectsMultipleDirectives(t *testing.T) {
 	y := `
 name: t

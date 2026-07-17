@@ -33,6 +33,18 @@ func TestReportRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWriteCreatesMissingDir(t *testing.T) {
+	// A fresh clone has no reports/ dir; Write must create it.
+	path := filepath.Join(t.TempDir(), "reports", "nested", "r.json")
+	r := &Report{Scenario: "s", Pass: true}
+	if err := r.Write(path); err != nil {
+		t.Fatalf("Write into missing dir: %v", err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("report not written: %v", err)
+	}
+}
+
 func TestSummary(t *testing.T) {
 	r := &Report{Scenario: "s", Pass: true}
 	r.Add("a", true, "")

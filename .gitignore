@@ -9,3 +9,12 @@
 
 # Scratch
 /scratch_dbg/
+
+# Local Claude Code settings (per-machine, not for sharing)
+.claude/settings.local.json
+
+# OS / editor cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/

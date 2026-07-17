@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -61,11 +62,17 @@ func (r *Report) Add(name string, pass bool, format string, a ...any) {
 	}
 }
 
-// Write serializes the report to path as indented JSON.
+// Write serializes the report to path as indented JSON, creating the parent
+// directory if needed (a fresh clone has no reports/ dir).
 func (r *Report) Write(path string) error {
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err
+	}
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o644)
 }

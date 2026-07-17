@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -31,7 +32,11 @@ func defaultComposeFile() string {
 func newRunner(cmd *cobra.Command) run.Runner {
 	compose, _ := cmd.Flags().GetString("compose")
 	project, _ := cmd.Flags().GetString("project")
-	return run.NewDocker(compose, project)
+	var profiles []string
+	if lab, _ := cmd.Flags().GetBool("lab"); lab {
+		profiles = append(profiles, "lab")
+	}
+	return run.NewDocker(compose, project, profiles...)
 }
 
 // signalCtx returns a context cancelled on SIGINT/SIGTERM so a run tears down
@@ -86,6 +91,14 @@ func loadScenario(cmd *cobra.Command, args []string) (*scenario.Scenario, error)
 			return nil, verr
 		}
 	}
+	if ds, _ := cmd.Flags().GetString("duration"); ds != "" {
+		d, derr := time.ParseDuration(ds)
+		if derr != nil || d <= 0 {
+			return nil, fmt.Errorf("invalid --duration %q: use a positive duration like 90s or 10m", ds)
+		}
+		sd := scenario.Duration(d)
+		s.RunDuration = &sd
+	}
 	return s, nil
 }
 
@@ -135,6 +148,8 @@ func runCmd() *cobra.Command {
 	cmd.Flags().String("preset", "", "run a bundled preset by name instead of a file")
 	cmd.Flags().String("source-file", "", "override the scenario source with this video file "+
 		"(path under /media, e.g. myclip.mp4 or /media/sub/clip.mp4)")
+	cmd.Flags().String("duration", "", "how long the stream runs (e.g. 90s, 10m); "+
+		"overrides the scenario's duration and the timeline-derived default")
 	return cmd
 }
 
@@ -324,9 +339,9 @@ func reportCmd() *cobra.Command {
 }
 
 func upCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "up",
-		Short: "Bring the compose stack up",
+		Short: "Start the testing machinery (add --lab for the bundled demo origin)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := signalCtx()
@@ -334,17 +349,23 @@ func upCmd() *cobra.Command {
 			return newRunner(cmd).ComposeUp(ctx)
 		},
 	}
+	cmd.Flags().Bool("lab", false, "also start the bundled MediaMTX demo origin (for trying it without your own platform)")
+	return cmd
 }
 
 func downCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "down",
-		Short: "Bring the compose stack down",
+		Short: "Stop and remove the stack (including the demo origin, if running)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := signalCtx()
 			defer cancel()
-			return newRunner(cmd).ComposeDown(ctx)
+			// Always tear down comprehensively — include the lab profile so the
+			// demo origin is removed even when `down` is called without --lab.
+			compose, _ := cmd.Flags().GetString("compose")
+			project, _ := cmd.Flags().GetString("project")
+			return run.NewDocker(compose, project, "lab").ComposeDown(ctx)
 		},
 	}
 }

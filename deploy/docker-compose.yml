@@ -1,29 +1,19 @@
-# streamwreck lab topology (spec §4.1). The whole point of containerizing is
-# network-namespace isolation: shaping happens inside a container's netns on its
-# veth, so it can never touch the host or other containers (§4.2#2).
+# streamwreck topology. The whole point of containerizing is network-namespace
+# isolation: shaping happens inside a container's netns on its veth, so it can
+# never touch the host or other containers (spec §4.2#2).
 #
 # Sidecars share their target's netns via network_mode: "service:<target>", so
 # `tc ... dev eth0` inside a sidecar impairs the target's interface while the
 # target image stays clean and unprivileged (§4.2#1).
+#
+# Default `up` starts only the machinery needed to test an EXTERNAL platform:
+# encoder + shaper (uplink) and player + player-shaper (playback QoE). The
+# bundled MediaMTX origin is a self-contained DEMO target, gated behind the
+# "lab" profile — start it with `streamwreck up --lab`.
 
 name: streamwreck
 
 services:
-  # MediaMTX: RTMP+SRT in → HLS/DASH out. Ingest and playback origin in one.
-  ingest:
-    image: bluenviron/mediamtx:latest
-    container_name: streamwreck-ingest
-    hostname: ingest
-    volumes:
-      - ./mediamtx.yml:/mediamtx.yml:ro
-    ports:
-      - "1935:1935"   # RTMP
-      - "8890:8890/udp" # SRT
-      - "8888:8888"   # HLS
-      - "8889:8889"   # DASH/WebRTC
-    networks:
-      - lab
-
   # Encoder: ffmpeg only. NO capabilities, no shaping tools. Idle entrypoint so
   # the host controller can `docker compose exec encoder ffmpeg ...` on demand.
   encoder:
@@ -35,10 +25,8 @@ services:
       # Drop your own videos in ./media (repo root) and reference them from a
       # scenario as `source: { type: file, file: /media/<name> }`.
       - ../media:/media:ro
-    depends_on:
-      - ingest
     networks:
-      - lab
+      - streamwreck
 
   # Shaper sidecar: shares the encoder's netns, holds NET_ADMIN + iproute2 +
   # threefive. This is the ONLY container that can shape the encoder uplink.
@@ -58,10 +46,8 @@ services:
     container_name: streamwreck-player
     hostname: player
     command: ["sleep", "infinity"]
-    depends_on:
-      - ingest
     networks:
-      - lab
+      - streamwreck
 
   # Player-shaper sidecar: shares the player's netns, NET_ADMIN + iproute2, sets
   # up the IFB ingress redirect to impair the DOWNLOAD path (§4.2#3).
@@ -75,6 +61,25 @@ services:
     depends_on:
       - player
 
+  # DEMO ONLY (profile "lab"): a self-contained MediaMTX origin so you can try
+  # streamwreck without your own platform. RTMP+SRT in → HLS/DASH out. The
+  # bundled presets target this via the `ingest` hostname; real runs point
+  # output.url at your platform instead and never touch this service.
+  ingest:
+    image: bluenviron/mediamtx:1.19.2
+    container_name: streamwreck-ingest
+    hostname: ingest
+    profiles: ["lab"]
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    ports:
+      - "1935:1935"     # RTMP
+      - "8890:8890/udp" # SRT
+      - "8888:8888"     # HLS
+      - "8889:8889"     # DASH/WebRTC
+    networks:
+      - streamwreck
+
 networks:
-  lab:
+  streamwreck:
     driver: bridge

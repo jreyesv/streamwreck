@@ -56,6 +56,11 @@ func (s *Scenario) Validate() error {
 		add("encoder.gop must be positive")
 	}
 
+	// Optional explicit run duration.
+	if s.RunDuration != nil && *s.RunDuration <= 0 {
+		add("duration must be positive")
+	}
+
 	// Output.
 	switch s.Output.Protocol {
 	case ProtocolRTMP, ProtocolSRT:

@@ -73,6 +73,9 @@ func (c *Controller) Run(ctx context.Context, s *scenario.Scenario) (*report.Rep
 
 	gopDur := gopDurationSeconds(s)
 	runDur := timelineDuration(s)
+	if s.RunDuration != nil {
+		runDur = *s.RunDuration // explicit `duration:` / --duration overrides the derived length
+	}
 	if c.runDurOverride != nil {
 		runDur = scenario.Duration(*c.runDurOverride)
 	}
