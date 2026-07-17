@@ -43,10 +43,10 @@ func BuildArgs(s *scenario.Scenario, opts LaunchOpts) ([]string, error) {
 		src = *opts.SourceOverride
 	}
 
-	// -nostats drops the per-frame progress spam from the streamed output while
-	// keeping connection/error messages visible (loglevel info) — quiet on a
-	// healthy run, informative when the publish fails.
-	args := []string{"-hide_banner", "-loglevel", "info", "-nostats", "-re"}
+	// -nostats drops the per-frame stats from stderr (kept clean for error
+	// capture); -progress pipe:1 emits machine-readable metrics on stdout that
+	// drive the live dashboard. -loglevel info keeps connection/errors on stderr.
+	args := []string{"-hide_banner", "-loglevel", "info", "-nostats", "-progress", "pipe:1", "-re"}
 
 	// Video input.
 	vin, err := videoInput(src)

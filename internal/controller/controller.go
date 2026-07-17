@@ -19,6 +19,7 @@ import (
 	"streamwreck/internal/scenario"
 	"streamwreck/internal/scte"
 	"streamwreck/internal/shaper"
+	"streamwreck/internal/status"
 	"streamwreck/internal/verify"
 )
 
@@ -40,6 +41,10 @@ type Controller struct {
 	verf   *verify.Verifier
 	log    func(format string, a ...any)
 
+	// live dashboard (nil in tests / when not streaming).
+	model *status.Model
+	live  *status.Live
+
 	// runDurOverride, when non-nil, replaces the timeline-derived run duration.
 	// Used by tests to avoid the multi-minute hold; nil in production.
 	runDurOverride *time.Duration
@@ -47,11 +52,14 @@ type Controller struct {
 	// encoderGrace is how long the encoder must survive after launch before the
 	// run proceeds (fail-fast on a dead encoder). Tests set it to 0.
 	encoderGrace time.Duration
+
+	// noUI disables the live dashboard (set by tests to keep output clean).
+	noUI bool
 }
 
 // New constructs a Controller from a Runner.
 func New(r run.Runner) *Controller {
-	return &Controller{
+	c := &Controller{
 		runner:       r,
 		enc:          encoder.NewSupervisor(r, svcEncoder),
 		egress:       shaper.New(r, svcShaper, shaper.Dev),
@@ -59,8 +67,58 @@ func New(r run.Runner) *Controller {
 		scte:         scte.New(r, svcShaper),
 		verf:         verify.New(r, svcPlayer),
 		encoderGrace: 2 * time.Second,
-		log:          func(f string, a ...any) { fmt.Fprintf(os.Stderr, "[streamwreck] "+f+"\n", a...) },
 	}
+	c.log = func(f string, a ...any) {
+		// While the animated dashboard owns the terminal, routine logs would
+		// corrupt it — suppress them (the dashboard conveys the state instead).
+		if c.live != nil && c.live.TTY() {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "[streamwreck] "+f+"\n", a...)
+	}
+	return c
+}
+
+// launch (re)starts the encoder and re-attaches the progress reader to the new
+// process so the dashboard keeps updating across restarts.
+func (c *Controller) launch(ctx context.Context, s *scenario.Scenario, opts encoder.LaunchOpts) error {
+	if err := c.enc.Launch(ctx, s, opts); err != nil {
+		return err
+	}
+	c.readProgress()
+	return nil
+}
+
+// readProgress streams the current encoder's ffmpeg -progress output into the
+// dashboard model. Each call attaches to the latest process; old readers EOF
+// when their process exits. No-op when there is no dashboard (tests).
+func (c *Controller) readProgress() {
+	if c.model == nil {
+		return
+	}
+	h := c.enc.Handle()
+	if h == nil || h.Stdout == nil {
+		return
+	}
+	go status.ParseProgress(h.Stdout, c.model.SetMetrics)
+}
+
+// startDashboard builds the live status model from the scenario's static facts
+// and starts rendering.
+func (c *Controller) startDashboard(s *scenario.Scenario, runDur scenario.Duration) {
+	res := s.Source.Resolution
+	if res == "" {
+		res = "1280x720"
+	}
+	fps := s.Source.FPS
+	if fps <= 0 {
+		fps = 30
+	}
+	targetKbps := float64(s.Encoder.VideoBitrate.BitsPerSecond()) / 1000
+	c.model = status.NewModel(s.Name, res, fps, s.Encoder.GOP, targetKbps,
+		string(s.Output.Protocol), hostFromURL(s.Output.URL), runDur.Std())
+	c.live = status.NewLive(c.model)
+	c.live.Start()
 }
 
 // Run executes the scenario end to end and returns the verification report (nil
@@ -136,6 +194,13 @@ func (c *Controller) Run(ctx context.Context, s *scenario.Scenario) (*report.Rep
 		return nil, fmt.Errorf("encoder failed to start: %w", err)
 	}
 
+	// Bring up the live dashboard and attach the progress reader.
+	if !c.noUI {
+		c.startDashboard(s, runDur)
+		defer c.live.Stop()
+		c.readProgress()
+	}
+
 	// Step the timeline (events fire at their offsets from `start`).
 	if err := c.stepTimeline(ctx, start, s, &launchOpts); err != nil {
 		return nil, err
@@ -161,6 +226,9 @@ func (c *Controller) Run(ctx context.Context, s *scenario.Scenario) (*report.Rep
 		PlaybackWindow:     20 * time.Second,
 	}
 	c.log("running verification (%d checks)", len(s.Verify.Checks))
+	if c.model != nil {
+		c.model.SetPhase("verifying")
+	}
 	rep, err := c.verf.Run(ctx, s, exp)
 	if err != nil {
 		return nil, err
@@ -228,16 +296,25 @@ func holdUntil(ctx context.Context, target time.Time) error {
 func (c *Controller) fire(ctx context.Context, s *scenario.Scenario, e scenario.Event, opts *encoder.LaunchOpts) error {
 	switch {
 	case e.Network != nil:
-		c.log("t=%s network: %s", e.At, describeNetwork(e.Network))
+		desc := describeNetwork(e.Network)
+		c.log("t=%s network: %s", e.At, desc)
+		c.setNetwork(desc)
 		return c.egress.Apply(ctx, e.Network)
 	case e.SourceSwitch != nil:
 		c.log("t=%s source_switch", e.At)
 		opts.SourceOverride = e.SourceSwitch
-		return c.enc.Launch(ctx, s, *opts)
+		return c.launch(ctx, s, *opts)
 	case e.Action != "":
 		return c.fireAction(ctx, s, e, opts)
 	}
 	return nil
+}
+
+// setNetwork updates the dashboard's current-impairment line.
+func (c *Controller) setNetwork(desc string) {
+	if c.model != nil {
+		c.model.SetNetwork(desc)
+	}
 }
 
 // fireAction handles the encoder-level chaos actions (Phase 4).
@@ -245,7 +322,7 @@ func (c *Controller) fireAction(ctx context.Context, s *scenario.Scenario, e sce
 	switch e.Action {
 	case scenario.ActionRestartEncoder:
 		c.log("t=%s restart_encoder", e.At)
-		return c.enc.Launch(ctx, s, *opts) // Launch stops the prior instance first
+		return c.launch(ctx, s, *opts) // Launch stops the prior instance first
 
 	case scenario.ActionKillEncoder:
 		dead := e.Params.Duration.Std()
@@ -258,23 +335,23 @@ func (c *Controller) fireAction(ctx context.Context, s *scenario.Scenario, e sce
 			return ctx.Err()
 		case <-time.After(dead):
 		}
-		return c.enc.Launch(ctx, s, *opts)
+		return c.launch(ctx, s, *opts)
 
 	case scenario.ActionAVDesync:
 		c.log("t=%s av_desync (offset %s)", e.At, e.Params.Offset)
 		opts.AVOffset = *e.Params.Offset
-		return c.enc.Launch(ctx, s, *opts)
+		return c.launch(ctx, s, *opts)
 
 	case scenario.ActionPTSJump:
 		c.log("t=%s pts_jump (jump %s)", e.At, e.Params.Jump)
 		opts.PTSJump = *e.Params.Jump
-		return c.enc.Launch(ctx, s, *opts)
+		return c.launch(ctx, s, *opts)
 
 	case scenario.ActionKeyframeMisalign:
 		// Shift the GOP phase by half a GOP so splices miss IDR frames.
 		opts.GOPPhaseShift = s.Encoder.GOP / 2
 		c.log("t=%s keyframe_misalign (phase +%d frames)", e.At, opts.GOPPhaseShift)
-		return c.enc.Launch(ctx, s, *opts)
+		return c.launch(ctx, s, *opts)
 	}
 	return fmt.Errorf("unknown action %q", e.Action)
 }

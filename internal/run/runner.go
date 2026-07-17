@@ -38,6 +38,9 @@ type Handle struct {
 	mu      sync.Mutex
 	exitErr error
 	Stderr  *bytes.Buffer
+	// Stdout streams the process's stdout (ffmpeg's -progress output). Read it
+	// to drive the live dashboard; it EOFs when the process exits.
+	Stdout io.Reader
 }
 
 // Wait blocks until the process exits and returns its exit error.
@@ -123,15 +126,18 @@ func (d *dockerRunner) Start(ctx context.Context, service string, argv ...string
 	args := d.composeArgs(append([]string{"exec", "-T", d.service(service)}, argv...)...)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	stderr := &bytes.Buffer{}
-	// ffmpeg writes ALL its logs (connection status, errors, progress) to stderr.
-	// Stream it live to our stderr so publish failures are visible, while also
-	// capturing a copy for post-mortem inspection.
-	cmd.Stderr = io.MultiWriter(os.Stderr, stderr)
-	cmd.Stdout = os.Stderr
+	// ffmpeg's logs/errors go to stderr — capture them for the fail-fast tail and
+	// the final summary (streaming them live would corrupt the in-place
+	// dashboard). Its -progress output goes to stdout, which drives the dashboard.
+	cmd.Stderr = stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("pipe stdout for %s: %w", service, err)
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start docker exec %s: %w", service, err)
 	}
-	h := &Handle{cmd: cmd, done: make(chan struct{}), Stderr: stderr}
+	h := &Handle{cmd: cmd, done: make(chan struct{}), Stderr: stderr, Stdout: stdout}
 	go func() {
 		err := cmd.Wait()
 		h.mu.Lock()

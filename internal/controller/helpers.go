@@ -36,6 +36,18 @@ func timelineDuration(s *scenario.Scenario) scenario.Duration {
 	return scenario.Duration(last + 30*time.Second)
 }
 
+// hostFromURL extracts the host from an ingest URL for compact display.
+func hostFromURL(u string) string {
+	s := u
+	for _, p := range []string{"rtmps://", "rtmp://", "srt://", "http://", "https://"} {
+		s = strings.TrimPrefix(s, p)
+	}
+	if i := strings.IndexAny(s, "/:?"); i >= 0 {
+		s = s[:i]
+	}
+	return s
+}
+
 // hasNetworkEvents reports whether the timeline applies any uplink shaping, so
 // the controller only preflights the shaper when it will actually be used.
 func hasNetworkEvents(s *scenario.Scenario) bool {

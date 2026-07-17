@@ -41,6 +41,7 @@ timeline:
 	zero := time.Duration(0)
 	c.runDurOverride = &zero
 	c.encoderGrace = 0
+	c.noUI = true
 
 	if _, err := c.Run(context.Background(), s); err != nil {
 		t.Fatal(err)
@@ -80,6 +81,7 @@ timeline:
 	zero := time.Duration(0)
 	c.runDurOverride = &zero
 	c.encoderGrace = 0
+	c.noUI = true
 	if _, err := c.Run(context.Background(), s); err != nil {
 		t.Fatal(err)
 	}

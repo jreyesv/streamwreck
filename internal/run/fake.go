@@ -57,7 +57,7 @@ func (f *FakeRunner) Start(_ context.Context, service string, argv ...string) (*
 	f.record(Call{Kind: "start", Service: service, Argv: argv})
 	// A fake "running" process: done stays open until Stop, so WaitFor reports it
 	// as alive (the controller's fail-fast must not trip on the fake encoder).
-	return &Handle{done: make(chan struct{}), Stderr: &bytes.Buffer{}}, nil
+	return &Handle{done: make(chan struct{}), Stderr: &bytes.Buffer{}, Stdout: strings.NewReader("")}, nil
 }
 
 func (f *FakeRunner) ComposeUp(context.Context) error {

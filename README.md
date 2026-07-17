@@ -66,6 +66,25 @@ committed**) and are runnable by name via `--preset`. Fully scripted form:
 > follower notifications, and ad impressions are real side effects. Only test infrastructure you own
 > or are authorized to.
 
+### Live dashboard
+
+While a scenario runs, streamwreck shows a live, in-place dashboard — static stream facts
+(resolution, framerate, keyframe interval, target bitrate) alongside live metrics parsed from
+ffmpeg, plus the current network impairment:
+
+```
+  ⠋ streamwreck  flaky-wifi      streaming 00:34 / 01:30
+
+  stream    1280x720 · 30fps · keyframe 2.0s · target 3.0 Mbps · rtmp
+  bitrate   2680 kbps    ████████████████░░   89%
+  rate      24.8fps · speed 0.83× · 744 frames · 12 dropped
+  network   delay 200ms±80ms · loss 12% · rate 800kbit (htb)
+```
+
+The bitrate bar and `speed` turn red when the encoder falls behind realtime — starvation shows up
+instantly. It animates in a terminal and falls back to periodic plain lines when output isn't a TTY
+(CI/logs); `NO_COLOR` disables color.
+
 ### What it's actually testing
 
 Not the network conditioning itself — that's the *stimulus*. It measures **how your pipeline reacts
