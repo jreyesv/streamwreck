@@ -97,6 +97,16 @@ func (c *Controller) Run(ctx context.Context, s *scenario.Scenario) (*report.Rep
 		}
 	}
 
+	// Preflight: if the scenario shapes the uplink, confirm the shaper can see
+	// its interface before we start. A stale sidecar netns (after a container
+	// rebuild) would otherwise make every impairment silently no-op — the
+	// scenario would "pass" while testing an unshaped stream.
+	if hasNetworkEvents(s) {
+		if err := c.egress.CheckDevice(ctx); err != nil {
+			return nil, err
+		}
+	}
+
 	// Clean slate on the egress before we start.
 	if err := c.egress.Clear(ctx); err != nil {
 		c.log("warning: initial egress clear failed: %v", err)

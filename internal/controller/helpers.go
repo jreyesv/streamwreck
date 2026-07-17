@@ -36,6 +36,17 @@ func timelineDuration(s *scenario.Scenario) scenario.Duration {
 	return scenario.Duration(last + 30*time.Second)
 }
 
+// hasNetworkEvents reports whether the timeline applies any uplink shaping, so
+// the controller only preflights the shaper when it will actually be used.
+func hasNetworkEvents(s *scenario.Scenario) bool {
+	for _, e := range s.Timeline {
+		if e.Network != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // expectedDiscontinuities counts events that should produce an
 // EXT-X-DISCONTINUITY: encoder restarts, kills, and PTS jumps.
 func expectedDiscontinuities(s *scenario.Scenario) int {

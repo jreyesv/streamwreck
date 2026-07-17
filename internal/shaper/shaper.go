@@ -35,6 +35,20 @@ func (s *Shaper) Clear(ctx context.Context) error {
 	return s.execAll(ctx, BuildClear(s.dev))
 }
 
+// CheckDevice verifies the shaping interface is visible in the sidecar's netns.
+// A failure means the sidecar is attached to a stale namespace — typically its
+// target container (encoder/player) was recreated, giving it a fresh netns while
+// the sidecar stayed bound to the old one. Without this check, every tc command
+// silently fails and the scenario tests an UNSHAPED stream.
+func (s *Shaper) CheckDevice(ctx context.Context) error {
+	if _, err := s.runner.Exec(ctx, s.service, "tc", "qdisc", "show", "dev", s.dev); err != nil {
+		return fmt.Errorf("shaper %q cannot see %s — its network namespace is stale (the target "+
+			"container was likely rebuilt). Run `streamwreck down && streamwreck up` to reattach it",
+			s.service, s.dev)
+	}
+	return nil
+}
+
 // ApplyIngress shapes the download path via the IFB redirect. Used by the
 // player-shaper for verify.degrade_player.
 //
