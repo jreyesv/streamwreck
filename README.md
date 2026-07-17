@@ -87,10 +87,10 @@ instantly. It animates in a terminal and falls back to periodic plain lines when
 
 ### What it's actually testing
 
-Not the network conditioning itself — that's the *stimulus*. It measures **how your pipeline reacts
+Not the network conditioning itself — that's the _stimulus_. It measures **how your pipeline reacts
 to a degraded broadcaster**: does ingest hold the connection through loss, or drop it? Does the
 transcoder stay clean under bursty frames? Does a reconnect produce a proper discontinuity or a black
-screen for viewers? And the money question — when the *broadcaster* has 15% loss, what do *viewers*
+screen for viewers? And the money question — when the _broadcaster_ has 15% loss, what do _viewers_
 see? The value is turning broadcaster-side failures (which you can't control and usually can't
 reproduce) into a deterministic experiment you can debug against and regression-gate in CI.
 
@@ -103,10 +103,10 @@ generates one for you; edit it or write your own. Key blocks:
 
 ```yaml
 source:
-  type: testsrc2          # testsrc2 (pattern) | smpte (bars) | complex (high-motion VBR) | file
+  type: testsrc2 # testsrc2 (pattern) | smpte (bars) | complex (high-motion VBR) | file
   resolution: 1280x720
   fps: 30
-  timecode_overlay: true  # burn PTS into the frame for latency/drift measurement
+  timecode_overlay: true # burn PTS into the frame for latency/drift measurement
 ```
 
 To stream your own footage, drop it in `media/` (mounted read-only into the encoder at `/media`) and
@@ -121,11 +121,12 @@ use `type: file, file: /media/clip.mp4` — or override any scenario without edi
 ```yaml
 timeline:
   - at: 30s
-    network: { delay: 200ms, jitter: 80ms, loss: 10%, rate: 2500kbit, accurate: true }
+    network:
+      { delay: 200ms, jitter: 80ms, loss: 10%, rate: 2500kbit, accurate: true }
   - at: 90s
     network: clear
   - at: 120s
-    action: restart_encoder     # also: kill_encoder, av_desync, pts_jump, keyframe_misalign
+    action: restart_encoder # also: kill_encoder, av_desync, pts_jump, keyframe_misalign
 ```
 
 `accurate: true` enforces the bandwidth cap with an `htb` shaper (netem `rate` alone is only
@@ -188,7 +189,7 @@ streamwreck run
   └─ exec player        ffmpeg pull + curl manifest         (grade viewer QoE)
 ```
 
-The design constraint (spec §4.2): the **encoder/player images stay clean and unprivileged**; only
+The **encoder/player images stay clean and unprivileged**; only
 the **shaper sidecars** carry `NET_ADMIN` + `tc`, joining their target's network namespace
 (`network_mode: "service:encoder"`) so `tc … dev eth0` shapes the target's interface. All shaping
 happens inside a container netns — it can never touch the host. See
@@ -200,7 +201,7 @@ happens inside a container netns — it can never touch the host. See
 - **Viewer-side shaping (`degrade_player`) needs the `ifb` kernel module** — present on mainstream
   Linux and CI runners, **absent from Docker Desktop for Mac's kernel**, where that path returns an
   actionable error and the run continues with a healthy origin.
-- **SCTE-35 live *injection* is a work in progress.** Cue authoring/decoding (threefive) is validated;
+- **SCTE-35 live _injection_ is a work in progress.** Cue authoring/decoding (threefive) is validated;
   landing authored cues in the manifest as `EXT-X-DATERANGE`/`CUE-OUT` is host/format dependent, so
   the verifier reports markers as missing when they don't land rather than falsely passing.
 
