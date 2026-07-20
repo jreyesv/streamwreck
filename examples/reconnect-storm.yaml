@@ -1,0 +1,41 @@
+# Broadcaster reconnecting (OBS-style drop/respawn). Tests discontinuity
+# handling — does the platform emit a clean EXT-X-DISCONTINUITY and do viewers
+# recover, or do they get a black screen / a new session?
+#
+# Copy into presets/user/, set output.url + verify.pull, run against STAGING.
+name: reconnect-storm
+
+source:
+  type: testsrc2
+  resolution: 1280x720
+  fps: 30
+  timecode_overlay: true
+
+encoder:
+  video_bitrate: 4500k
+  maxrate: 4500k
+  bufsize: 9000k
+  gop: 60
+  keyint_min: 60
+  preset: veryfast
+  tune: zerolatency
+  audio_bitrate: 160k
+
+output:
+  protocol: rtmp
+  url: rtmp://ingest.yourplatform.com/app/STREAMKEY
+
+timeline:
+  - at: 30s
+    action: restart_encoder # clean reconnect
+  - at: 60s
+    action: kill_encoder
+    params: { duration: 5s } # dead 5s, then back
+  - at: 90s
+    action: restart_encoder
+
+verify:
+  enabled: true
+  pull: https://play.yourplatform.com/CHANNEL/index.m3u8
+  checks: [discontinuity_tags, join_time, segment_duration]
+  report: ./reports/reconnect-storm.json

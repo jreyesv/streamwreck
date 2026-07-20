@@ -149,6 +149,57 @@ Two guardrails make misconfiguration self-explanatory:
 - **Fail-fast on a dead encoder.** If ffmpeg exits within ~2s (bad URL, rejected key, wrong protocol),
   the run aborts immediately and prints ffmpeg's log tail instead of failing verification later.
 
+## Example scenarios
+
+Ready-to-adapt templates for the most common platform tests live in [examples/](examples/). Copy one
+into `presets/user/` (gitignored, so your stream key stays out of git), swap the placeholder
+`output.url` (and `verify.pull`) for your own, and run it. All use a 2-second keyframe interval.
+
+| Example | Tests |
+|---|---|
+| [flaky-connection.yaml](examples/flaky-connection.yaml) | Variable delay/jitter + a loss burst, then recovery — the everyday bad uplink |
+| [uplink-starvation.yaml](examples/uplink-starvation.yaml) | Bandwidth capped below the encode bitrate — graceful degradation vs. disconnect |
+| [bandwidth-collapse.yaml](examples/bandwidth-collapse.yaml) | Mid-stream congestion collapse, then recovery |
+| [reconnect-storm.yaml](examples/reconnect-storm.yaml) | Broadcaster drop/respawn — discontinuity handling |
+| [high-motion.yaml](examples/high-motion.yaml) | High-entropy VBR gameplay colliding with a modest cap |
+
+For instance, `flaky-connection.yaml`:
+
+```yaml
+name: flaky-connection
+source: { type: testsrc2, resolution: 1280x720, fps: 30, timecode_overlay: true }
+encoder:
+  video_bitrate: 4500k
+  maxrate: 4500k
+  bufsize: 9000k
+  gop: 60            # 60 / 30fps = 2s keyframe interval
+  keyint_min: 60
+  preset: veryfast
+  tune: zerolatency
+  audio_bitrate: 160k
+output:
+  protocol: rtmp
+  url: rtmp://ingest.yourplatform.com/app/STREAMKEY     # ← your ingest + stream key
+timeline:
+  - at: 30s
+    network: { delay: 120ms, jitter: 40ms, loss: 3% }   # mild
+  - at: 60s
+    network: { delay: 250ms, jitter: 100ms, loss: 12% } # bad patch
+  - at: 90s
+    network: clear                                       # recovery
+verify:
+  enabled: true
+  pull: https://play.yourplatform.com/CHANNEL/index.m3u8 # ← your viewer HLS URL
+  checks: [join_time, rebuffering, segment_duration]
+  report: ./reports/flaky-connection.json
+```
+
+```bash
+cp examples/flaky-connection.yaml presets/user/mytest.yaml
+# edit output.url + verify.pull in presets/user/mytest.yaml, then:
+./streamwreck run presets/user/mytest.yaml
+```
+
 ## Try it without a platform
 
 Don't have an ingest handy? A bundled **MediaMTX** origin gives you a self-contained demo. Start it

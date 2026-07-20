@@ -1,0 +1,41 @@
+# Broadcaster on a flaky connection: variable delay + jitter with a periodic
+# loss burst, then recovery. The most common real-world uplink problem.
+#
+# To use: copy into presets/user/ (gitignored), replace output.url with your
+# ingest + stream key and verify.pull with your viewer playback URL, then run.
+# Use a STAGING channel.
+name: flaky-connection
+
+source:
+  type: testsrc2 # or `complex`, or override with --source-file yourclip.mp4
+  resolution: 1280x720
+  fps: 30
+  timecode_overlay: true
+
+encoder:
+  video_bitrate: 4500k
+  maxrate: 4500k
+  bufsize: 9000k
+  gop: 60 # 60 / 30fps = 2s keyframe interval
+  keyint_min: 60
+  preset: veryfast
+  tune: zerolatency
+  audio_bitrate: 160k
+
+output:
+  protocol: rtmp
+  url: rtmp://ingest.yourplatform.com/app/STREAMKEY
+
+timeline:
+  - at: 30s
+    network: { delay: 120ms, jitter: 40ms, loss: 3% } # mild
+  - at: 60s
+    network: { delay: 250ms, jitter: 100ms, loss: 12% } # bad patch
+  - at: 90s
+    network: clear # recovery
+
+verify:
+  enabled: true
+  pull: https://play.yourplatform.com/CHANNEL/index.m3u8 # your viewer HLS URL
+  checks: [join_time, rebuffering, segment_duration]
+  report: ./reports/flaky-connection.json

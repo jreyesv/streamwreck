@@ -1,0 +1,38 @@
+# Uplink bandwidth capped well below the encode bitrate (htb-accurate) — the
+# stream cannot fit through the pipe. Tests whether the pipeline degrades
+# gracefully or drops the broadcaster.
+#
+# Copy into presets/user/, set output.url + verify.pull, run against STAGING.
+name: uplink-starvation
+
+source:
+  type: testsrc2
+  resolution: 1920x1080
+  fps: 30
+  timecode_overlay: true
+
+encoder:
+  video_bitrate: 6M
+  maxrate: 6M
+  bufsize: 12M
+  gop: 60
+  keyint_min: 60
+  preset: veryfast
+  tune: zerolatency
+  audio_bitrate: 160k
+
+output:
+  protocol: rtmp
+  url: rtmp://ingest.yourplatform.com/app/STREAMKEY
+
+timeline:
+  - at: 30s
+    network: { rate: 2500kbit, accurate: true } # 2.5 Mbps pipe for a 6 Mbps stream
+  - at: 120s
+    network: clear
+
+verify:
+  enabled: true
+  pull: https://play.yourplatform.com/CHANNEL/index.m3u8
+  checks: [rebuffering, segment_duration, join_time]
+  report: ./reports/uplink-starvation.json

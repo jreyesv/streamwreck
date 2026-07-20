@@ -1,0 +1,40 @@
+# Bandwidth collapses mid-stream (a congestion event), then recovers. Tests
+# whether the pipeline rides it out and recovers cleanly for viewers.
+#
+# Copy into presets/user/, set output.url + verify.pull, run against STAGING.
+name: bandwidth-collapse
+
+source:
+  type: complex # high-entropy content so the encoder actually fills the pipe
+  complexity: medium
+  resolution: 1920x1080
+  fps: 30
+  timecode_overlay: true
+
+encoder:
+  video_bitrate: 6M
+  maxrate: 6M
+  bufsize: 12M
+  gop: 60
+  keyint_min: 60
+  preset: veryfast
+  tune: zerolatency
+  audio_bitrate: 160k
+
+output:
+  protocol: rtmp
+  url: rtmp://ingest.yourplatform.com/app/STREAMKEY
+
+timeline:
+  - at: 30s
+    network: { rate: 3500kbit, accurate: true, loss: 2% } # squeeze
+  - at: 60s
+    network: { rate: 1500kbit, accurate: true, loss: 8% } # deep collapse
+  - at: 100s
+    network: clear # recovery
+
+verify:
+  enabled: true
+  pull: https://play.yourplatform.com/CHANNEL/index.m3u8
+  checks: [rebuffering, segment_duration, join_time]
+  report: ./reports/bandwidth-collapse.json
