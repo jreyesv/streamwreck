@@ -53,8 +53,24 @@ type Controller struct {
 	// run proceeds (fail-fast on a dead encoder). Tests set it to 0.
 	encoderGrace time.Duration
 
+	// stopGrace is how long ffmpeg gets to finalize the stream after the SIGINT
+	// on teardown (Ctrl-C / end of run) before it is force-killed. Tests set it
+	// to 0 to avoid the wait.
+	stopGrace time.Duration
+
 	// noUI disables the live dashboard (set by tests to keep output clean).
 	noUI bool
+}
+
+// encoderLogDrain is how long EncoderLog waits for the last, still-terminating
+// encoder instance to exit before reading its buffer.
+const encoderLogDrain = 1500 * time.Millisecond
+
+// EncoderLog returns the ffmpeg stderr captured for each encoder instance this
+// run (one per launch/relaunch), for post-run inspection via `run --encoder-log`.
+// Call it after Run returns, when the dashboard and encoder are torn down.
+func (c *Controller) EncoderLog() []encoder.LogInstance {
+	return c.enc.Log(encoderLogDrain)
 }
 
 // New constructs a Controller from a Runner.
@@ -67,6 +83,7 @@ func New(r run.Runner) *Controller {
 		scte:         scte.New(r, svcShaper),
 		verf:         verify.New(r, svcPlayer),
 		encoderGrace: 2 * time.Second,
+		stopGrace:    3 * time.Second,
 	}
 	c.log = func(f string, a ...any) {
 		// While the animated dashboard owns the terminal, routine logs would
@@ -185,7 +202,9 @@ func (c *Controller) Run(ctx context.Context, s *scenario.Scenario) (*report.Rep
 	if err := c.enc.Launch(ctx, s, launchOpts); err != nil {
 		return nil, fmt.Errorf("launch encoder: %w", err)
 	}
-	defer func() { _ = c.enc.Stop(context.Background()) }()
+	// Teardown (normal end or Ctrl-C) stops the encoder gracefully so the stream
+	// ends with a proper end-of-stream to the ingest, not an abrupt disconnect.
+	defer func() { _ = c.enc.StopGraceful(context.Background(), c.stopGrace) }()
 
 	// Fail fast: if the encoder dies right away (bad ingest URL, rejected stream
 	// key, wrong protocol), abort now with its log instead of holding the whole
@@ -335,6 +354,41 @@ func (c *Controller) fireAction(ctx context.Context, s *scenario.Scenario, e sce
 			return ctx.Err()
 		case <-time.After(dead):
 		}
+		return c.launch(ctx, s, *opts)
+
+	case scenario.ActionReconnect:
+		// Model a broadcaster losing internet and reconnecting — the flow an
+		// ingest's disconnect protection exists to handle. The disconnect must look
+		// like lost internet (silent), and the recovery must be a FRESH RTMP session
+		// (a new connection with the same key), not the old one resuming — that is
+		// what disconnect protection waits for.
+		dead := e.Params.Duration.Std()
+		c.log("t=%s reconnect (offline %s)", e.At, dead)
+		// 1. Blackout the uplink egress so neither an RTMP unpublish nor the TCP
+		//    close reaches the ingest: it sees pure silence and engages disconnect
+		//    protection (slate) instead of ending the stream. Egress-only is enough
+		//    here because we kill the encoder next — no frozen process to protect
+		//    from an inbound RST, so no ingress drop (and no IFB/module) is needed.
+		if err := c.egress.Apply(ctx, blackoutSpec()); err != nil {
+			c.log("reconnect: egress blackout failed: %v", err)
+		}
+		c.setNetwork("offline (lost internet)")
+		if err := c.enc.Stop(ctx); err != nil {
+			return err
+		}
+		// 2. Stay offline for the dead period. This MUST be within the ingest's
+		//    reconnect window, or the reconnect below lands after the stream has
+		//    ended and starts a new one instead of resuming.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(dead):
+		}
+		// 3. Restore the uplink and reconnect with a fresh publish (same key).
+		if err := c.egress.Clear(ctx); err != nil {
+			c.log("reconnect: egress clear failed: %v", err)
+		}
+		c.setNetwork("reconnecting")
 		return c.launch(ctx, s, *opts)
 
 	case scenario.ActionAVDesync:

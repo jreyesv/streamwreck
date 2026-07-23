@@ -22,12 +22,17 @@ func New(r run.Runner, service, dev string) *Shaper {
 	return &Shaper{runner: r, service: service, dev: dev}
 }
 
-// Apply installs a netem/htb impairment on the egress of the shared interface.
+// Apply installs a netem/htb impairment on the egress of the shared interface,
+// or a full-link blackout (cut) / teardown (clear) per the spec's mode.
 func (s *Shaper) Apply(ctx context.Context, n *scenario.NetworkSpec) error {
-	if n.Clear {
+	switch {
+	case n.Clear:
 		return s.Clear(ctx)
+	case n.Cut:
+		return s.execAll(ctx, BuildCut(s.dev))
+	default:
+		return s.execAll(ctx, BuildApply(s.dev, n))
 	}
-	return s.execAll(ctx, BuildApply(s.dev, n))
 }
 
 // Clear removes all egress qdiscs.

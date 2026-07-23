@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -82,6 +83,60 @@ timeline:
 	}
 	if second := s.Timeline[1].Network; second == nil || !second.Clear {
 		t.Error("second event should be network: clear")
+	}
+}
+
+func TestParseScenario_NetworkCut(t *testing.T) {
+	y := `
+name: t
+source: { type: testsrc2, fps: 30 }
+encoder: { video_bitrate: 3M, gop: 60 }
+output: { protocol: rtmp, url: rtmp://x/y }
+timeline:
+  - at: 30s
+    network: cut
+  - at: 50s
+    network: clear
+`
+	s, err := Parse([]byte(y))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first := s.Timeline[0].Network; first == nil || !first.Cut {
+		t.Error("first event should be network: cut")
+	}
+	if second := s.Timeline[1].Network; second == nil || !second.Clear {
+		t.Error("second event should be network: clear")
+	}
+	// An unvalidated scalar must still be rejected.
+	bad := strings.Replace(y, "network: cut", "network: kaboom", 1)
+	if _, err := Parse([]byte(bad)); err == nil {
+		t.Error("expected an unknown network scalar to be rejected")
+	}
+}
+
+func TestWarnings_Loss100(t *testing.T) {
+	y := `
+name: t
+source: { type: testsrc2, fps: 30 }
+encoder: { video_bitrate: 3M, gop: 60 }
+output: { protocol: rtmp, url: rtmp://x/y }
+timeline:
+  - at: 30s
+    network: { loss: 100% }
+  - at: 50s
+    network: clear
+`
+	s, err := Parse([]byte(y))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := s.Warnings()
+	if len(w) != 1 {
+		t.Fatalf("expected 1 warning for loss: 100%%, got %d: %v", len(w), w)
+	}
+	if !strings.Contains(w[0], "network: cut") {
+		t.Errorf("warning should point the user to `network: cut`, got: %s", w[0])
 	}
 }
 

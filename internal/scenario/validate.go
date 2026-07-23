@@ -122,6 +122,22 @@ func (s *Scenario) Validate() error {
 	return nil
 }
 
+// Warnings returns non-fatal advisories about an otherwise-valid scenario:
+// sharp edges that are legal but likely to surprise. `run` and `validate` print
+// these so the user sees them before a run rather than after a confusing result.
+func (s *Scenario) Warnings() []string {
+	var w []string
+	for i, e := range s.Timeline {
+		if e.Network != nil && e.Network.Loss != nil && e.Network.Loss.Value() >= 100 {
+			w = append(w, fmt.Sprintf("timeline[%d] (at %s): `loss: 100%%` saturates the uplink but leaves "+
+				"the downlink open, so the ingest's connection-close will drop the encoder and it will NOT "+
+				"recover on `clear`. For a recoverable outage (temporarily lost internet), use `network: cut`.",
+				i, e.At))
+		}
+	}
+	return w
+}
+
 func (e Event) validate(i int) []string {
 	var errs []string
 	label := fmt.Sprintf("timeline[%d] (at %s)", i, e.At)
@@ -153,6 +169,10 @@ func (e Event) validate(i int) []string {
 	case ActionKillEncoder:
 		if e.Params.Duration == nil {
 			errs = append(errs, label+": action kill_encoder requires params.duration")
+		}
+	case ActionReconnect:
+		if e.Params.Duration == nil {
+			errs = append(errs, label+": action reconnect requires params.duration (seconds offline before reconnecting)")
 		}
 	case ActionAVDesync:
 		if e.Params.Offset == nil {

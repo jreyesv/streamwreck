@@ -56,9 +56,34 @@ func BuildApply(dev string, n *scenario.NetworkSpec) [][]string {
 	return cmds
 }
 
-// BuildClear returns the command to remove all egress qdiscs from dev.
+// BuildCut installs a full-link blackout: it drops packets in BOTH directions on
+// dev, freezing the connection instead of tearing it down. Outbound is dropped
+// with netem loss 100%; inbound is dropped by a match-all filter on an ingress
+// qdisc (no IFB needed — we only drop, never shape). Because inbound packets —
+// including the ingest's connection-close RST — never reach the socket, the TCP
+// connection stays ESTABLISHED and can resume once BuildClear removes the block.
+// This models a real internet outage, unlike egress-only `loss: 100%` (which
+// leaves the downlink open, so the peer's RST kills the encoder and it cannot
+// recover on clear).
+func BuildCut(dev string) [][]string {
+	return [][]string{
+		// Clean slate in both directions (idempotent).
+		delRoot(dev),
+		delIngress(dev),
+		// Outbound: drop everything leaving dev.
+		tc("qdisc", "add", "dev", dev, "root", "netem", "loss", "100%"),
+		// Inbound: attach an ingress qdisc and a match-all drop filter.
+		tc("qdisc", "add", "dev", dev, "handle", "ffff:", "ingress"),
+		tc("filter", "add", "dev", dev, "parent", "ffff:", "protocol", "all", "u32",
+			"match", "u32", "0", "0", "action", "drop"),
+	}
+}
+
+// BuildClear returns the commands to remove all shaping from dev — both the
+// egress root qdisc and any ingress qdisc (installed by a cut). Both dels ignore
+// "nothing installed" so clear is always safe.
 func BuildClear(dev string) [][]string {
-	return [][]string{delRoot(dev)}
+	return [][]string{delRoot(dev), delIngress(dev)}
 }
 
 // BuildIngress returns the command sequence that sets up the IFB ingress
@@ -118,6 +143,11 @@ func netemArgs(n *scenario.NetworkSpec, allowRate bool) []string {
 func delRoot(dev string) []string {
 	// Ignore "no such file" when nothing is installed yet.
 	return []string{"sh", "-c", fmt.Sprintf("tc qdisc del dev %s root 2>/dev/null; true", dev)}
+}
+
+func delIngress(dev string) []string {
+	// Ignore "no such file" when no ingress qdisc is installed (the common case).
+	return []string{"sh", "-c", fmt.Sprintf("tc qdisc del dev %s ingress 2>/dev/null; true", dev)}
 }
 
 func tc(args ...string) []string { return append([]string{"tc"}, args...) }

@@ -126,7 +126,63 @@ timeline:
   - at: 90s
     network: clear
   - at: 120s
-    action: restart_encoder # also: kill_encoder, av_desync, pts_jump, keyframe_misalign
+    action: restart_encoder # also: kill_encoder, reconnect, av_desync, pts_jump, keyframe_misalign
+```
+
+A `network` event is the literal `clear` (remove all shaping), the literal `cut` (a full-link
+blackout, below), or an object of the fields below. The object form shapes the **uplink** (the
+encoder's egress) and persists until the next `network` event or a `clear` — each event replaces the
+previous impairment rather than stacking on it.
+
+| Field | Form | Effect |
+| --- | --- | --- |
+| `delay` | duration (`200ms`, `1s`) | added latency on every packet |
+| `jitter` | duration (`80ms`) | delay variance; only meaningful **with** `delay`, and must be **> 0** if set |
+| `loss` | percent (`10%`, `0.5%`, bare `3`) | random packet drop |
+| `corrupt` | percent | flips a random bit in that share of packets |
+| `duplicate` | percent | duplicates that share of packets |
+| `reorder` | percent | reorders that share of packets (needs a `delay` to be meaningful) |
+| `rate` | bitrate (`2500kbit`, `2M`) | bandwidth cap on the uplink |
+| `accurate` | bool | enforce `rate` with an `htb` shaper (truthful cap); requires `rate` |
+
+**`network: cut` — "lost internet".** A `cut` drops packets in **both** directions on the uplink,
+freezing the connection instead of tearing it down, then `clear` restores it:
+
+```yaml
+- at: 30s
+  network: cut     # whole-link blackout — the connection freezes
+- at: 50s
+  network: clear   # restored → the SAME session resumes (no reconnect, no new stream)
+```
+
+Use this — not `loss: 100%` — to model a broadcaster temporarily losing internet (and to test an
+ingest's disconnect-protection / reconnect window). `loss: 100%` shapes the **egress only**, so the
+downlink stays open and the ingest's connection-close still reaches the encoder and drops it; it will
+**not** recover on `clear`. (`run`/`validate` warn when a scenario uses `loss: 100%`.)
+
+**`action: reconnect` — lost internet, then reconnect.** This is the faithful test of an ingest's
+disconnect-protection / reconnect window: it blacks out the uplink (a *silent* drop — no RTMP
+unpublish, so the ingest shows its slate instead of ending the stream), stays offline for
+`params.duration`, then re-establishes a **fresh** RTMP session with the same key.
+
+```yaml
+- at: 30s
+  action: reconnect
+  params: { duration: 15s }   # offline 15s (keep it inside the ingest's window), then reconnect
+```
+
+The reconnect is a *new* connection, not the old one resuming — that's what disconnect protection
+waits for. If the ingest resumes the same stream, the feature works; if it stays on the slate or
+starts a new stream despite an in-window reconnect, that's a real problem to escalate. (`network:
+cut` and `loss: 100%`, by contrast, keep the *same* connection and never reconnect, so they can't
+exit the slate.)
+
+To see what the ingest sends back to the encoder (server-initiated closes, RTMP status, resets),
+add `--encoder-log`. It prints the captured ffmpeg stderr for every encoder instance — highlighting
+the interesting lines — *after* the run, so it never disturbs the live dashboard:
+
+```bash
+./streamwreck run --preset mytest --encoder-log
 ```
 
 `accurate: true` enforces the bandwidth cap with an `htb` shaper (netem `rate` alone is only

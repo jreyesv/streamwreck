@@ -79,4 +79,28 @@ func TestBuildClear(t *testing.T) {
 	if !strings.Contains(out, "qdisc del dev eth0 root") {
 		t.Errorf("clear should delete root qdisc:\n%s", out)
 	}
+	// Clear must also remove any ingress qdisc a cut installed.
+	if !strings.Contains(out, "qdisc del dev eth0 ingress") {
+		t.Errorf("clear should delete ingress qdisc:\n%s", out)
+	}
+}
+
+func TestBuildCut_DropsBothDirections(t *testing.T) {
+	out := Render(BuildCut(Dev))
+	for _, want := range []string{
+		// Outbound: everything leaving eth0 is dropped.
+		"tc qdisc add dev eth0 root netem loss 100%",
+		// Inbound: ingress qdisc + a match-all drop filter (no IFB — drop, not shape).
+		"qdisc add dev eth0 handle ffff: ingress",
+		"u32 match u32 0 0 action drop",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("cut missing %q:\n%s", want, out)
+		}
+	}
+	// A cut must NOT redirect to an IFB device (that's the shaping path, and IFB
+	// is unavailable on some hosts — a plain drop needs no such device).
+	if strings.Contains(out, "ifb") {
+		t.Errorf("cut should not reference ifb (it drops, not shapes):\n%s", out)
+	}
 }

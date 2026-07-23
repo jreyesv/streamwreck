@@ -41,6 +41,7 @@ timeline:
 	zero := time.Duration(0)
 	c.runDurOverride = &zero
 	c.encoderGrace = 0
+	c.stopGrace = 0
 	c.noUI = true
 
 	if _, err := c.Run(context.Background(), s); err != nil {
@@ -81,6 +82,7 @@ timeline:
 	zero := time.Duration(0)
 	c.runDurOverride = &zero
 	c.encoderGrace = 0
+	c.stopGrace = 0
 	c.noUI = true
 	if _, err := c.Run(context.Background(), s); err != nil {
 		t.Fatal(err)
@@ -95,6 +97,49 @@ timeline:
 	// Initial launch + the restart = at least 2 ffmpeg starts.
 	if launches < 2 {
 		t.Errorf("expected >=2 encoder launches (initial + restart), got %d", launches)
+	}
+}
+
+func TestRun_ReconnectBlacksOutAndRelaunches(t *testing.T) {
+	s := buildScenario(t, `
+name: t
+source: { type: testsrc2, fps: 30 }
+encoder: { video_bitrate: 3M, gop: 60 }
+output: { protocol: rtmp, url: rtmp://ingest/live/stream }
+timeline:
+  - at: 0s
+    action: reconnect
+    params: { duration: 0s }
+`)
+	fake := run.NewFake()
+	c := New(fake)
+	c.log = func(string, ...any) {}
+	zero := time.Duration(0)
+	c.runDurOverride = &zero
+	c.encoderGrace = 0
+	c.stopGrace = 0
+	c.noUI = true
+	if _, err := c.Run(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+
+	var sawBlackout bool
+	launches := 0
+	for _, call := range fake.ExecCalls() {
+		j := joinedArgv(call)
+		if call.Service == svcShaper && strings.Contains(j, "netem loss 100%") {
+			sawBlackout = true
+		}
+		if call.Service == svcEncoder && strings.Contains(j, "ffmpeg ") {
+			launches++
+		}
+	}
+	if !sawBlackout {
+		t.Error("reconnect should blackout the uplink egress (netem loss 100%) so the drop looks like lost internet")
+	}
+	// Initial launch + the reconnect relaunch = at least 2 ffmpeg starts.
+	if launches < 2 {
+		t.Errorf("expected >=2 encoder launches (initial + reconnect), got %d", launches)
 	}
 }
 

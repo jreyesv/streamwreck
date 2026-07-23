@@ -92,6 +92,7 @@ type ActionType string
 const (
 	ActionRestartEncoder   ActionType = "restart_encoder"
 	ActionKillEncoder      ActionType = "kill_encoder"
+	ActionReconnect        ActionType = "reconnect"
 	ActionAVDesync         ActionType = "av_desync"
 	ActionPTSJump          ActionType = "pts_jump"
 	ActionKeyframeMisalign ActionType = "keyframe_misalign"
@@ -111,13 +112,21 @@ type Event struct {
 type ActionParams struct {
 	Offset   *Duration `yaml:"offset"`   // av_desync
 	Jump     *Duration `yaml:"jump"`     // pts_jump
-	Duration *Duration `yaml:"duration"` // kill_encoder (leave dead N seconds)
+	Duration *Duration `yaml:"duration"` // kill_encoder / reconnect (stay offline N seconds)
 }
 
-// NetworkSpec is either the literal string "clear" (remove all qdiscs) or an
-// object of impairment fields. Clear is represented by Clear=true.
+// NetworkSpec is one of: the literal string "clear" (remove all shaping), the
+// literal string "cut" (a full-link blackout — see Cut), or an object of
+// impairment fields. Clear/Cut are represented by their bool flags.
 type NetworkSpec struct {
 	Clear bool
+
+	// Cut is a bidirectional blackout: it drops packets in BOTH directions on the
+	// uplink, freezing the connection instead of tearing it down. Unlike
+	// `loss: 100%` (egress only, so the peer's connection-close RST still reaches
+	// the encoder and kills it), a cut lets the same session resume on `clear` —
+	// the faithful model of a broadcaster temporarily losing internet.
+	Cut bool
 
 	Delay     *Duration `yaml:"delay"`
 	Jitter    *Duration `yaml:"jitter"`
@@ -129,17 +138,22 @@ type NetworkSpec struct {
 	Accurate  bool      `yaml:"accurate"` // stack htb/tbf under netem for a truthful rate cap
 }
 
-// UnmarshalYAML accepts both `network: clear` (scalar) and `network: { ... }`.
+// UnmarshalYAML accepts the scalars `network: clear` / `network: cut` and the
+// object form `network: { ... }`.
 func (n *NetworkSpec) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind == yaml.ScalarNode {
 		var s string
 		if err := value.Decode(&s); err != nil {
 			return err
 		}
-		if s != "clear" {
-			return fmt.Errorf("network scalar must be \"clear\", got %q", s)
+		switch s {
+		case "clear":
+			*n = NetworkSpec{Clear: true}
+		case "cut":
+			*n = NetworkSpec{Cut: true}
+		default:
+			return fmt.Errorf("network scalar must be \"clear\" or \"cut\", got %q", s)
 		}
-		*n = NetworkSpec{Clear: true}
 		return nil
 	}
 	// Object form: decode into an alias to avoid recursion.

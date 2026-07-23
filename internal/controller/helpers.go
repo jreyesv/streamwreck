@@ -65,11 +65,21 @@ func expectedDiscontinuities(s *scenario.Scenario) int {
 	n := 0
 	for _, e := range s.Timeline {
 		switch e.Action {
-		case scenario.ActionRestartEncoder, scenario.ActionKillEncoder, scenario.ActionPTSJump:
+		case scenario.ActionRestartEncoder, scenario.ActionKillEncoder, scenario.ActionReconnect, scenario.ActionPTSJump:
 			n++
 		}
 	}
 	return n
+}
+
+// blackoutSpec is a full egress blackout (100% uplink loss) used by the
+// reconnect action to make a disconnect look like lost internet: the ingest sees
+// silence — no data, no RTMP unpublish, and (since 100% loss drops it too) not
+// even the TCP close — so it engages disconnect protection rather than ending
+// the stream.
+func blackoutSpec() *scenario.NetworkSpec {
+	loss := scenario.Percent(100)
+	return &scenario.NetworkSpec{Loss: &loss}
 }
 
 // playerImpairment derives the netem spec applied to the player pull path when
@@ -86,6 +96,9 @@ func playerImpairment(s *scenario.Scenario) *scenario.NetworkSpec {
 func describeNetwork(n *scenario.NetworkSpec) string {
 	if n.Clear {
 		return "clear"
+	}
+	if n.Cut {
+		return "cut (link blackout)"
 	}
 	var parts []string
 	if n.Delay != nil {

@@ -99,6 +99,11 @@ func loadScenario(cmd *cobra.Command, args []string) (*scenario.Scenario, error)
 		sd := scenario.Duration(d)
 		s.RunDuration = &sd
 	}
+	// Surface non-fatal advisories (e.g. `loss: 100%` won't recover on clear) up
+	// front, before a run produces a confusing result.
+	for _, w := range s.Warnings() {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
 	return s, nil
 }
 
@@ -131,6 +136,11 @@ func runCmd() *cobra.Command {
 
 			c := controller.New(newRunner(cmd))
 			rep, err := c.Run(ctx, s)
+			// Printed after Run returns — the live dashboard is torn down by then,
+			// so the log block never competes with the animated view.
+			if show, _ := cmd.Flags().GetBool("encoder-log"); show {
+				PrintEncoderLog(os.Stderr, c.EncoderLog())
+			}
 			if err != nil {
 				return err
 			}
@@ -150,6 +160,8 @@ func runCmd() *cobra.Command {
 		"(path under /media, e.g. myclip.mp4 or /media/sub/clip.mp4)")
 	cmd.Flags().String("duration", "", "how long the stream runs (e.g. 90s, 10m); "+
 		"overrides the scenario's duration and the timeline-derived default")
+	cmd.Flags().Bool("encoder-log", false, "after the run, print the encoder's ffmpeg log "+
+		"(server-side closes / RTMP status / resets) — useful for debugging disconnects")
 	return cmd
 }
 
